@@ -1,6 +1,8 @@
 import re
 import logging
 import datetime as dt
+import pytz
+from datetime import datetime
 from typing import Any, Text, Dict, List, Type
 from rasa.engine.recipes.default_recipe import DefaultV1Recipe
 from rasa.engine.graph import ExecutionContext, GraphComponent
@@ -18,7 +20,7 @@ from rasa.shared.nlu.constants import (
     ENTITIES,
 )
 from dateparser.search import search_dates
-
+from parsivar import Normalizer
 logger = logging.getLogger(__name__)
 
 
@@ -58,7 +60,7 @@ class DateparserEntityExtractor(EntityExtractorMixin, GraphComponent):
             self.settings["PREFER_DATES_FROM"] = config.get("prefer_dates_from")
         if config.get("relative_base"):
             base = config.get("relative_base")
-            self.settings["RELATIVE_BASE"] = dt.datetime.strptime(base, "%Y-%m-%d")
+            self.settings["RELATIVE_BASE"] = dt.datetime.strptime(base, "%Y-%m-%d %H:%M")
         self.languages = config.get("languages")
 
     def train(self, training_data: TrainingData) -> Resource:
@@ -75,7 +77,17 @@ class DateparserEntityExtractor(EntityExtractorMixin, GraphComponent):
         return cls(config, execution_context.node_name, model_storage, resource)
 
     def process(self, messages: List[Message]) -> List[Message]:
+      """
+      Preprocess text with Parsivar package (just Normalizing).
+      example: input >> "یازده شهریور هزار و سیصد و نود و شش"
+      output >> "۱۳۹۶/۶/۱۱"
+      """
         for message in messages:
+            if 'text' in message.data.keys():
+                msg = message.data['text']
+                message.data['text'] = Normalizer(date_normalizing_needed=True).normalize(msg)
+                # Normalize twice to support more complicated sentences
+                message.data['text'] = Normalizer(date_normalizing_needed=True).normalize(message.data['text'])
             self._set_entities(message)
         return messages
 
@@ -87,7 +99,8 @@ class DateparserEntityExtractor(EntityExtractorMixin, GraphComponent):
         hits = search_dates(
             message.get(TEXT),
             languages=self.languages if self.languages else None,
-            settings=self.settings,
+            # set relative_base time to the current time
+            settings = {"RELATIVE_BASE": datetime.now(pytz.timezone('Asia/Tehran'))},
         )
         if not hits:
             return []
